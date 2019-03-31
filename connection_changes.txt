@@ -1,0 +1,5 @@
+at start, run sudo service mongod start
+
+then run mongo
+
+then to stop run sudo service mongod stop
