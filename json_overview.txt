@@ -1,0 +1,15 @@
+JSON
+
+Objects: {} map string keys to values, e.g. {string, value}, {string1, value1}...
+
+Arrays: [] order values
+
+values: can be strings, numbers, booleans, null, objects, arrays
+
+How does this correspond to Mongo?
+
+Database maps names to collections, you can access collections by name in the same way you can access values in a Python dictionary. 
+
+A collection is like a list of dictionaries, called 'documents' in mongodb, similar to a table in a reqular SQL DB.
+
+When a dictionary is a value within a document, that's a subdoc 
