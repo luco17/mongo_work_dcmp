@@ -1,6 +1,7 @@
 import os, requests
 from pymongo import MongoClient
 from bson.regex import Regex
+from fractions import Fraction
 
 #Connecting to MongoClient
 client = MongoClient()
@@ -145,3 +146,15 @@ list(db.laureates.find({}, {'firstname': 1, 'surname': 1, 'prizes.share': 1, '_i
 
 ##below syntax returns the same, but can't deselect the _id field
 list(db.laureates.find({}, ['firstname', 'surname', 'prizes.share']))[:3]
+
+##Using a projection to find only relevant laureates with G firstnames and S surnames, returns a list
+names = [' '.join([doc['firstname'], doc['surname']])
+            for doc in db.laureates.find(
+                {'firstname': {'$regex': '^G'},
+                'surname': {'$regex': '^S'}},
+                ['firstname', 'surname'])]
+
+##Checking that all fractional prizes add up to one
+docs = list(db.prizes.find({}, ['laureates.share']))
+check = all(1 == sum(Fraction(1, int(laureate['share'])) for laureate in doc['laureates']) for doc in docs)
+assert check
