@@ -3,7 +3,9 @@ from pymongo import MongoClient
 from bson.regex import Regex
 from fractions import Fraction
 from operator import itemgetter
-from collections import Counter
+from collections import Counter, OrderedDict
+from pprint import pprint
+from itertools import groupby
 
 #Connecting to MongoClient
 client = MongoClient()
@@ -217,3 +219,53 @@ n_born_and_affiliated = {country: db.laureates.count_documents({
 for country in db.laureates.distinct('bornCountry')}
 
 Counter(n_born_and_affiliated).most_common(5)
+
+##Limits
+###Simple limit
+list(db.prizes.find({"category": "economics"}, {"year": 1, "_id": 0}).sort("year").limit(3))
+
+###Limit with simple share
+filter_ = {'laureates.share': '4'}
+projection = {'category': 1, 'year': 1, 'laureates.motivation': 1, '_id': 0}
+cursor = db.prizes.find(filter_, projection).sort('year').limit(2)
+pprint(list(cursor))
+
+###Defining a function to return 3 entries per page
+def get_part_laureates(page_number = 1, page_size = 3):
+    if page_number < 1 or not isinstance(page_number, int):
+        raise ValueError("Pages must start from 1")
+    particle_laureates = list(db.laureates.find(
+        {'prizes.motivation': {'$regex': 'particle'}},
+        {'firstname': 1, 'surname': 1, 'prizes': 1, '_id': 0}).sort([('prizes.year', 1), ('surname', 1)])
+    .skip(page_size * (page_number - 1)).limit(page_size))
+    return particle_laureates
+
+###Running a list comprehension to return 3 pages of data
+[get_part_laureates(page_number = page) for page in range(1, 3)]
+
+list(db.laureates.find(
+    projection = {"firstname": 1, "prizes.year": 1, "_id": 0},
+    filter = {"gender": "org"}).limit(3).sort("prizes.year", -1))
+
+##Aggregations: server side filtering
+###Building a simple pipeline for filtering
+pipe = [{'$match': {'gender': {'$ne': 'org'}}},
+        {'$project': {'bornCountry': 1, 'prizes.affiliations.country': 1}},
+        {'$limit': 3}]
+
+###List comprehension
+for doc in db.laureates.aggregate(pipe):
+    print("{bornCountry}: {prizes}".format(**doc))
+
+###Pipelining to find years where one of the original categories was missing
+pipeline = [{'$match': {'category': {'$in': sorted(orig_cats)}}},
+            {'$project': {'year': 1, 'category': 1}},
+            {'$sort': OrderedDict([('year', -1)])}]
+
+cursor = db.prizes.aggregate(pipeline)
+
+###Iterating over the cursor, using groupby to group by year
+for key, group in groupby(cursor, key = itemgetter('year')):
+    missing = orig_cats - {doc['category'] for doc in group}
+    if missing:
+        print('{year}: {missing}'.format(year = key, missing = ', '.join(sorted(missing))))
