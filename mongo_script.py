@@ -1,7 +1,9 @@
-import os, requests
+import os, requests, itertools
 from pymongo import MongoClient
 from bson.regex import Regex
 from fractions import Fraction
+from operator import itemgetter
+from collections import Counter
 
 #Connecting to MongoClient
 client = MongoClient()
@@ -132,7 +134,7 @@ criteria = {'bornCountry': Regex('^Germany' + ' \(' + 'now')}
 db.laureates.distinct('bornCountry', criteria)
 
 ###Countries that were something else but are now Germany
-criteria = {'bornCountry': Regex('now ' + 'Germany\)' + '$' )}
+criteria = {'bornCountry': Regex('now ' + 'Germany\)' + '$' )}system
 db.laureates.distinct('bornCountry', criteria)
 
 ##Printing the names of laureates who invented the transistor, using a list comprehension
@@ -158,3 +160,60 @@ names = [' '.join([doc['firstname'], doc['surname']])
 docs = list(db.prizes.find({}, ['laureates.share']))
 check = all(1 == sum(Fraction(1, int(laureate['share'])) for laureate in doc['laureates']) for doc in docs)
 assert check
+
+##Sorting
+###Basic sorted list
+docs = list(db.laureates.find(
+    {'born': {'$gte': '1900'}, 'prizes.year': {'$gte': '1954'}},
+    {'born': 1, 'prizes.year': 1, '_id': 0},
+    sort = [('prizes.year', 1), ('born', -1)]))
+
+###More advanced Sorting
+docs = list(db.prizes.find(
+    {'category': 'physics'},
+    {'year': 1, 'laureates.firstname': 1, 'laureates.surname': 1, '_id': 0},
+    sort = [('year', 1)]))
+
+###More precision in specification and use of the .format feature
+for doc in sorted(docs, key = itemgetter('year')):
+    print('{year}: {fst_lte_snme}'.format(year = doc['year'], fst_lte_snme = doc['laureates'][0]['surname']))
+
+###Finding years where a given prize was missing, has to run as one block, otherwise must use cursor.rewind
+orig_cats = set(db.prizes.distinct('category', {'year': '1901'}))
+cursor = db.prizes.find(
+    {'category': {'$in': list(orig_cats)}},
+    ['category', 'year'],
+    sort = [('year', -1), ('category', 1)])
+cursor.rewind()
+
+not_awarded = []
+
+for key, group in itertools.groupby(cursor, key = itemgetter('year')):
+    year_categories = set(prize['category'] for prize in group)
+    missing = ', '.join(sorted(orig_cats - year_categories))
+    if missing: not_awarded.append("{}: {}".format(key, missing))
+
+##Using indexes to speed up queries
+###Projected field passed first, filter argument second
+index_model = [('category', 1), ('year', -1)]
+db.prizes.create_index(index_model)
+
+###Finding disciplines that have not shared the prize in recent years
+report = ''
+for category in sorted(db.prizes.distinct('category')):
+    doc = db.prizes.find_one(
+        {'category': category, 'laureates.share': '1'},
+        sort = [('year', -1)]
+    )
+    report += "{category}: {year}\n".format(**doc)
+
+print(report)
+
+###Counting laureates who were born and affiliated in the same country
+db.laureates.create_index([('bornCountry', 1)])
+n_born_and_affiliated = {country: db.laureates.count_documents({
+    'bornCountry': country,
+    'prizes.affiliations.country': country})
+for country in db.laureates.distinct('bornCountry')}
+
+Counter(n_born_and_affiliated).most_common(5)
