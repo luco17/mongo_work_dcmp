@@ -269,3 +269,71 @@ for key, group in groupby(cursor, key = itemgetter('year')):
     missing = orig_cats - {doc['category'] for doc in group}
     if missing:
         print('{year}: {missing}'.format(year = key, missing = ', '.join(sorted(missing))))
+
+##Pathways
+###Counting number of prizes awarded to organisations, using pathwyas instead of count docs
+pipeline = [{'$match': {'gender': 'org'}},
+            {'$project': {'n_prizes': {'$size': '$prizes'}}},
+            {'$group': {'_id': None, 'n_prizes_total': {'$sum': '$n_prizes'}}}]
+
+list(db.laureates.aggregate(pipeline))
+
+###Long pipeline to highlight years where original categories were missing
+orig_cats = sorted(set(db.prizes.distinct('category', {'year': '1901'})))
+pipeline = [
+    {"$match": {"category": {"$in": orig_cats}}},
+    {"$project": {"category": 1, "year": 1}},
+
+    # Collecting categories for each prize year.
+    {"$group": {"_id": '$year', "categories": {"$addToSet": "$category"}}},
+
+    # Projecting categories missing cats from a given year
+    {"$project": {"missing": {"$setDifference": [orig_cats, "$categories"]}}},
+
+    # Years with at least one missing category
+    {"$match": {"missing.0": {"$exists": True}}},
+
+    # Sort in reverse chronological order
+    {"$sort": OrderedDict([("_id", -1)])},
+]
+
+for doc in db.prizes.aggregate(pipeline):
+    print("{year}: {missing}".format(year=doc["_id"],missing=", ".join(sorted(doc["missing"]))))
+
+###Counting the number of laureates by category
+list(db.prizes.aggregate([
+    {'$project': {'n_laureates': {'$size': '$laureates'}, 'category': 1}},
+    {'$group': {'_id': '$category', 'n_laureates': {'$sum': '$n_laureates'}}},
+    {'$sort': {'n_laureates': -1}}
+]))
+
+###Using unwind to count individual laureates and list IDs by year
+list(db.prizes.aggregate([
+        {'$unwind': '$laureates'},
+        {'$project': {'year': 1, 'category': 1, 'laureates.id': 1}},
+        {'$group': {'_id': {'$concat': ['$category', ':', '$year']},
+            'laureate_ids': {'$addToSet': '$laureates.id'}}},
+        {'$limit': 5}
+]))
+
+###Counting laureates winning prizes while affiliated with an institution in their birth country
+key_ac = "prizes.affiliations.country"
+key_bc = "bornCountry"
+
+pipeline = [
+    {"$project": {key_bc: 1, key_ac: 1}},
+
+    # Ensure a single prize affiliation country per pipeline document
+    {'$unwind': "$prizes"},
+    {'$unwind': "$prizes.affiliations"},
+
+    # Ensure values in the list of distinct values (so not empty)
+    {"$match": {key_ac: {'$in': db.laureates.distinct(key_ac)}}},
+    {"$project": {"affilCountrySameAsBorn": {
+        "$gte": [{"$indexOfBytes": ["$"+key_ac, "$"+key_bc]}, 0]}}},
+
+    # Count by "$affilCountrySameAsBorn" value (True or False)
+    {"$group": {"_id": "$affilCountrySameAsBorn",
+                "count": {"$sum": 1}}},
+]
+for doc in db.laureates.aggregate(pipeline): print(doc)
