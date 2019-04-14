@@ -271,7 +271,7 @@ for key, group in groupby(cursor, key = itemgetter('year')):
         print('{year}: {missing}'.format(year = key, missing = ', '.join(sorted(missing))))
 
 ##Pathways
-###Counting number of prizes awarded to organisations, using pathwyas instead of count docs
+###Counting number of prizes awarded to organisations, using pathways instead of count docs
 pipeline = [{'$match': {'gender': 'org'}},
             {'$project': {'n_prizes': {'$size': '$prizes'}}},
             {'$group': {'_id': None, 'n_prizes_total': {'$sum': '$n_prizes'}}}]
@@ -337,3 +337,37 @@ pipeline = [
                 "count": {"$sum": 1}}},
 ]
 for doc in db.laureates.aggregate(pipeline): print(doc)
+
+###Finding different laureate birth country counts by prize categories
+pipeline = [{'$unwind': '$laureates'},
+            {'$lookup': {'from': 'laureates', 'foreignField': 'id', 'localField': 'laureates.id', 'as': 'laureate_bios'}},
+            {'$unwind': '$laureate_bios'},
+            {'$project': {'category': 1, 'bornCountry': '$laureate_bios.bornCountry'}},
+            {'$group': {'_id': '$category', 'bornCountries': {'$addToSet': '$bornCountry'}}},
+            {'$project': {'category': 1, 'nBornCountries': {'$size': '$bornCountries'}}},
+            {'$sort': {'nBornCountries': -1}}]
+
+for doc in db.prizes.aggregate(pipeline):
+    print(doc)
+
+db.laureates.find_one()
+
+##Using $addfields
+###Counting laureates who were awarded prizes at institutions separate from their home country
+pipeline = [
+            #Eliminating organisations, projecting needing fields and unwinding
+            {'$match': {'gender': {'$ne': 'org'}}},
+            {'$project': {'bornCountry': 1, 'prizes.affiliations.country': 1}},
+            {'$unwind': '$prizes'},
+            #Counting prizes with no birth affiliation
+            {'$addFields': {'bornCountryInAff': {'$in': ['$bornCountry', '$prizes.affiliations.country']}}},
+            {'$match': {'bornCountryInAff': False}},
+            {'$count': 'awardedElsewhere'}
+]
+
+print(list(db.laureates.aggregate(pipeline)))
+
+###Cleaning above pipe to remove 'unaffiliated'
+added_stage = {'$match': {'prizes.affiliations.country': {'$in': db.laureates.distinct('prizes.affiliations.country')}}}
+pipeline.insert(3, added_stage)
+print(list(db.laureates.aggregate(pipeline)))
